@@ -1,0 +1,254 @@
+services:
+  api:
+    build:
+      context: ./sar-api
+      dockerfile: Dockerfile
+    container_name: sar-api-local
+    env_file:
+      - path: ./sar-api/.env.sample
+      - path: ./sar-api/.env.local
+        required: false
+    environment:
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_EC2_METADATA_DISABLED: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+      # GEO_SERVER_URL: http://geoserver:8080/geoserver
+      BACKEND_URL: http://localhost:18000/api/v1
+      FRONT_END_URL: http://localhost:18080
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn main:app --host 0.0.0.0 --port 80 --reload"
+    ports:
+      - "18000:80"
+    volumes:
+      - ./sar-api:/app
+      - ./sar-worker-2/output:/app/local-ndvi-output
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./sar-fe
+      dockerfile: Dockerfile
+      args:
+        BUILD_MODE: docker
+    container_name: sar-fe-local
+    ports:
+      - "18080:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  # sen1:
+  #   build:
+  #     context: ./sar-worker
+  #     dockerfile: Dockerfile
+  #   platform: linux/amd64
+  #   container_name: sen1-local
+  #   env_file:
+  #     - path: ./sar-worker/.env.sample
+  #     - path: ./sar-worker/.env.local
+  #       required: false
+  #   environment:
+  #     GEOSERVER_URL: http://geoserver:8080/geoserver
+  #   command: >
+  #     sh -c "VMOPTIONS=\"$${GPT_PATH:-/opt/esa-snap/bin/gpt}.vmoptions\" &&
+  #            TMP_VMOPTIONS=\"$$(mktemp)\" &&
+  #            awk -v xms=\"$${SNAP_JAVA_XMS:-2G}\" -v xmx=\"$${SNAP_JAVA_XMX:-6G}\" '
+  #              BEGIN { seen_xms = 0; seen_xmx = 0 }
+  #              {
+  #                sub(/\r$$/, \"\")
+  #                if ($$0 ~ /^-Xms/) {
+  #                  print \"-Xms\" xms
+  #                  seen_xms = 1
+  #                } else if ($$0 ~ /^-Xmx/) {
+  #                  print \"-Xmx\" xmx
+  #                  seen_xmx = 1
+  #                } else {
+  #                  print
+  #                }
+  #              }
+  #              END {
+  #                if (!seen_xms) print \"-Xms\" xms
+  #                if (!seen_xmx) print \"-Xmx\" xmx
+  #              }
+  #            ' \"$$VMOPTIONS\" > \"$$TMP_VMOPTIONS\" &&
+  #            mv \"$$TMP_VMOPTIONS\" \"$$VMOPTIONS\" &&
+  #            if [ -n \"$$PARAMS\" ]; then
+  #              python main.py;
+  #            else
+  #              echo 'sen1 container started in standby mode';
+  #              tail -f /dev/null;
+  #            fi"
+  #   volumes:
+  #     - ./sar-worker/download:/app/download
+  #     - ./sar-worker/logs:/app/logs
+  #     - ./sar-worker/output:/app/output
+  #     - ./sar-geo/local/import:/app/geoserver-import
+  #   depends_on:
+  #     api:
+  #       condition: service_started
+  #     postgres:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+  # sen2-ndvi:
+  #   build:
+  #     context: ./sar-worker-2
+  #     dockerfile: Dockerfile
+  #   platform: linux/amd64
+  #   container_name: sen2-ndvi-local
+  #   env_file:
+  #     - path: ./sar-worker-2/.env.sample
+  #     - path: ./sar-worker-2/.env.local
+  #       required: false
+  #   environment:
+  #     GEOSERVER_URL: http://geoserver:8080/geoserver
+  #     EODATA_SSL_VERIFY: "false"
+  #     LOCAL_SKIP_S3: "true"
+  #   command: >
+  #     sh -c "if [ -n \"$$PARAMS\" ]; then
+  #              /opt/conda/bin/python main.py;
+  #            else
+  #              echo 'sen2-ndvi container started in standby mode';
+  #              tail -f /dev/null;
+  #            fi"
+  #   volumes:
+  #     - ./sar-worker-2/download:/app/download
+  #     - ./sar-worker-2/logs:/app/logs
+  #     - ./sar-worker-2/output:/app/output
+  #     - ./sar-geo/local/import:/app/geoserver-import
+  #   depends_on:
+  #     api:
+  #       condition: service_started
+  #     postgres:
+  #       condition: service_healthy
+  #     geoserver:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+  # geoserver:
+  #   image: kartoza/geoserver:2.28.3--v2026.04.03
+  #   container_name: sar-geoserver-local
+  #   environment:
+  #     GEOSERVER_DATA_DIR: /opt/geoserver/data_dir
+  #     GEOWEBCACHE_CACHE_DIR: /opt/geoserver/gwc
+  #     GEOSERVER_ADMIN_USER: admin
+  #     GEOSERVER_ADMIN_PASSWORD: admin
+  #     GEOSERVER_CONTEXT_ROOT: geoserver
+  #     ROOT_WEBAPP_REDIRECT: "true"
+  #     INITIAL_MEMORY: 1G
+  #     MAXIMUM_MEMORY: 3G
+  #     COMMUNITY_EXTENSIONS: flatgeobuf-plugin,gwc-mbtiles-plugin,mbtiles-plugin,cog-s3-plugin,cog-http-plugin
+  #     CONSOLE_HANDLER_LEVEL: WARNING
+  #     RUN_AS_ROOT: "true"
+  #     SAMPLE_DATA: "false"
+  #     LOGGING_STDOUT: "true"
+  #   ports:
+  #     - "8600:8080"
+  #   volumes:
+  #     - ./sar-geo/local/data_dir:/opt/geoserver/data_dir
+  #     - ./sar-geo/local/gwc:/opt/geoserver/gwc
+  #     - ./sar-geo/local/import:/opt/geoserver/import
+  #     - ./sar-geo/local/settings:/settings
+  #     - ./sar-geo/local/footprints:/opt/footprints_dir
+  #     - ./sar-geo/local/fonts:/opt/fonts
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl --fail --silent --output /dev/null -u $${GEOSERVER_ADMIN_USER}:$${GEOSERVER_ADMIN_PASSWORD} http://localhost:8080/geoserver/rest/about/version.xml"]
+  #     interval: 20s
+  #     timeout: 10s
+  #     retries: 30
+  #     start_period: 90s
+  #   restart: unless-stopped
+
+  # geoserver-init:
+  #   image: alpine:3.20
+  #   container_name: sar-geoserver-init-local
+  #   environment:
+  #     GEOSERVER_ADMIN_USER: admin
+  #     GEOSERVER_ADMIN_PASSWORD: admin
+  #   depends_on:
+  #     geoserver:
+  #       condition: service_healthy
+  #     postgres:
+  #       condition: service_healthy
+  #   entrypoint: ["/bin/sh", "-ec"]
+  #   command:
+  #     - |
+  #       apk add --no-cache curl >/dev/null
+  #       GS_BASE="http://geoserver:8080/geoserver/rest"
+  #       AUTH="$${GEOSERVER_ADMIN_USER}:$${GEOSERVER_ADMIN_PASSWORD}"
+
+  #       if ! curl -fsS -u "$$AUTH" "$$GS_BASE/workspaces/sar.json" >/dev/null; then
+  #         curl -fsS -u "$$AUTH" -H "Content-Type: application/json" \
+  #           -d '{"workspace":{"name":"sar"}}' \
+  #           "$$GS_BASE/workspaces"
+  #       fi
+
+  #       if ! curl -fsS -u "$$AUTH" "$$GS_BASE/workspaces/sar/datastores/sar.json" >/dev/null; then
+  #         curl -fsS -u "$$AUTH" -H "Content-Type: application/json" \
+  #           -d '{"dataStore":{"name":"sar","enabled":true,"connectionParameters":{"entry":[{"@key":"dbtype","$":"postgis"},{"@key":"host","$":"postgres"},{"@key":"port","$":"5432"},{"@key":"database","$":"sar"},{"@key":"schema","$":"public"},{"@key":"user","$":"sar"},{"@key":"passwd","$":"sar123"},{"@key":"Expose primary keys","$":"true"},{"@key":"validate connections","$":"true"},{"@key":"preparedStatements","$":"false"}]}}}' \
+  #           "$$GS_BASE/workspaces/sar/datastores"
+  #       fi
+
+  #       echo "GeoServer workspace/datastore ready: sar/sar"
+  #   restart: "no"
+
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: sar-postgres-local
+    environment:
+      POSTGRES_DB: sar
+      POSTGRES_USER: sar
+      POSTGRES_PASSWORD: sar123
+      TZ: UTC
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sar-api/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sar -d sar"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: sar-redis-local
+    command: redis-server --appendonly yes
+    ports:
+      - "56379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: sar-mailpit-local
+    ports:
+      - "51025:1025"
+      - "58025:8025"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
